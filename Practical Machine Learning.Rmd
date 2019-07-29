@@ -1,0 +1,133 @@
+---
+title: "Practical Machine Learning Project"
+author: "Kristine Pagaduan"
+date: "July 29, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#Overview
+In this analysis, we look at Weight Lifting Exercise Dataset for 6 participants in experimental conditions. The objective of the study is to assess whether each participant exercised correctly (class A) or whether the participant had some common mistake during the exercise (clas B - E).
+
+#Exploratory Data Analysis
+```{r}
+library(caret)
+library(gbm)
+library(randomForest)
+
+# Retrieving the Data
+target <-"pml-training.csv"
+if (!file.exists(target)) {
+  url <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+  target <- "pml-training.csv"
+  download.file(url, destfile = target)
+}
+# replace missing values and division errors with NA
+sample <-read.csv(target, header=T, sep=",", na.strings=c("NA","#DIV/0!"))
+
+target <-"pml-testing.csv"
+if (!file.exists(target)) {
+  url <-"http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+  download.file(url, destfile = target)
+}
+finaltest <-read.csv(target, header=T, sep=",", na.strings=c("NA","#DIV/0!"))
+```
+#Cross Validation
+```{r}
+set.seed(1239)
+#create training set indexes with 60% of data
+sample_data <- createDataPartition(y=sample$classe, p=0.6, list=FALSE)
+#subset sample data to training
+training <- sample[sample_data, ]
+#subset sample data (the rest) to test
+testing <- sample[-sample_data, ]
+#dimension of original, training, testing, and validation datasets
+rbind("original dataset" = dim(sample),"training set"=dim(training),"testing set"=dim(testing),"validation"=dim(finaltest))
+```
+#Data Cleaning
+```{r}
+#count number of missing values in each dataset
+sum(is.na(training)==TRUE)
+## [1] 1155161
+sum(is.na(testing)==TRUE)
+## [1] 769941
+#calculate the percentage of missing values in each of the variables in the original train and test datasets
+NApercentTrain <- sapply(training, function(df) {sum(is.na(df)==TRUE)/length(df)})
+NApercentTest <- sapply(testing, function(df) {sum(is.na(df)==TRUE)/length(df)})
+#remove variables that have more than 95% missing values from testing and training datasets
+colnames1 <- names(which(NApercentTrain < 0.95))
+trainingData <- training[, colnames1]
+colnames2 <- names(which(NApercentTest < 0.95))
+testingData <- testing[, colnames2]
+#Recheck for Missing Values
+sum(is.na(trainingData)==TRUE); sum(is.na(testingData)==TRUE)
+#Remove variables that are not useful for Prediction Models
+#Identify variables that have very little variability 
+nzv_train<-nearZeroVar(trainingData,saveMetrics=TRUE)
+nzv_test<-nearZeroVar(testingData,saveMetrics=TRUE)
+#remove all variables with nzv = TRUE because predictor is a near-zero-variance predictor
+SubCleanTrainData <- trainingData[,which(nzv_train$nzv==FALSE)]
+SubCleanTestData <- testingData[,which(nzv_test$nzv==FALSE)]
+#remove x and cvtd_timestamp columns
+CleanTrainData <- SubCleanTrainData[,c(2:4,6:59)]
+CleanTestData <- SubCleanTestData[,c(2:4,6:59)]
+```
+#Modeling
+The appropriate models for the exercise are those that allow for multiple dependent variables because we have 5 classes to predict. In this project, the Logistic Regression is not considered because it only allows for binomial response variables.
+##Random Forest
+```{r}
+set.seed(1239)
+#build model on sub-training set
+model <-"rfModFit.RData"
+if (!file.exists(model)) {
+        # Start the clock!
+        my.date <- as.character(Sys.time())
+        ptm <- proc.time()
+        #fit the outcome to be classe and to use any of the other predictive variables as potential predictors
+        #modFit <- train(classe~ .,data=CleanTrainData, method="rf", prox=TRUE)
+        #use randomForest function as it is faster than train()
+        rfmodFit <- randomForest(classe~ .,data=CleanTrainData)
+        save(rfmodFit, file="rfModFit.RData")
+        proc.time() - ptm
+        my.enddate <- as.character(Sys.time())
+        my.date
+        my.enddate
+} else {
+        load(file="rfModFit.RData", verbose=FALSE)
+}
+#Evaluate with Random Forest on sub-train set to capture in-sample error
+rftrainPC <- predict(rfmodFit, CleanTrainData)
+rftrainAcc <- confusionMatrix(CleanTrainData$classe, rftrainPC)$overall
+
+#Evaluate with Random Forest on sub-test set
+rftestPC <-predict(rfmodFit,CleanTestData)
+rftrainAcc[1]
+```
+##Boosted Decision Trees with Gradient Boosting
+```{r}
+set.seed(123)
+#build model on sub-training set
+model <-"gbmModFit.RData"
+if (!file.exists(model)) {
+        # Start the clock!
+        gbmmy.date <- as.character(Sys.time())
+        ptm <- proc.time()
+        gbmmodFit <- train(classe~ .,data=CleanTrainData, method="gbm", verbose=FALSE)
+        save(gbmmodFit, file="gbmModFit.RData")
+        proc.time() - ptm
+        gbm.enddate <- as.character(Sys.time())
+} else {
+        load(file="gbmModFit.RData", verbose=FALSE)
+}
+```
+#Predictions for the Quiz
+```{r}
+predquiz <- predict(rfmodFit, finaltest)
+names(predquiz) <- c(1:20)
+predquiz
+```
+#Summary
+Two models were built to predict the category in which participants belong. The random forest model gave better results than the decision tree model as it was able to predict
+with more than 90% accuracy.
